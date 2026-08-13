@@ -1,31 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import {
-		fetchMetrics,
-		fetchLogs,
-		fetchConfig,
-		fetchMediaInfoStatus,
-		runMediaInfo,
-		cancelMediaInfo
-	} from '../../api/client';
-	import type { WebMetrics, MediaInfoStatus } from '../../api/types';
-	import {
-		Activity,
-		Terminal,
-		Settings,
-		Database,
-		Play,
-		Square,
-		RefreshCw,
-		HardDrive,
-		Cpu,
-		Zap
-	} from '@lucide/svelte';
+	import { fetchMetrics, fetchLogs, fetchMediaInfoStatus, runMediaInfo, cancelMediaInfo } from '../../api/client';
+	import type { ServerMetrics, MediaInfoStatus } from '../../api/types';
+	import MetricsPanel from './MetricsPanel.svelte';
+	import ConfigEditor from './ConfigEditor.svelte';
+	import ProviderCard from './ProviderCard.svelte';
+	import { Activity, Terminal, Settings, Database, Play, Square, RefreshCw } from '@lucide/svelte';
 
 	let activeSubTab = $state<'metrics' | 'logs' | 'config' | 'mediainfo'>('metrics');
-	let metrics = $state<WebMetrics | null>(null);
+	let metrics = $state<ServerMetrics | null>(null);
 	let logsText = $state<string>('Loading logs...');
-	let configData = $state<any>(null);
 	let mediaInfoStatus = $state<MediaInfoStatus | null>(null);
 	let logFilter = $state<string>('');
 
@@ -35,14 +19,13 @@
 		return () => clearInterval(interval);
 	});
 
+	// The config tab owns its own loading and, more importantly, its own unsaved
+	// edits — polling it every five seconds would overwrite them mid-keystroke.
 	async function loadData() {
+		if (activeSubTab === 'config') return;
 		metrics = await fetchMetrics();
 		if (activeSubTab === 'logs') {
 			logsText = await fetchLogs();
-		} else if (activeSubTab === 'config' && !configData) {
-			try {
-				configData = await fetchConfig();
-			} catch {}
 		} else if (activeSubTab === 'mediainfo') {
 			mediaInfoStatus = await fetchMediaInfoStatus();
 		}
@@ -114,45 +97,7 @@
 	</div>
 
 	{#if activeSubTab === 'metrics'}
-		<div class="metrics-grid">
-			<div class="stat-card glass-card">
-				<div class="stat-header">
-					<Zap size={20} class="text-cyan" />
-					<span class="stat-label">Browse Requests</span>
-				</div>
-				<span class="stat-value">{metrics ? metrics.browse_requests : '—'}</span>
-				<span class="stat-sub">Cache Hits: {metrics ? metrics.cache_hits : 0}</span>
-			</div>
-
-			<div class="stat-card glass-card">
-				<div class="stat-header">
-					<HardDrive size={20} class="text-violet" />
-					<span class="stat-label">Files Served</span>
-				</div>
-				<span class="stat-value">{metrics ? metrics.file_serves : '—'}</span>
-				<span class="stat-sub">Direct HTTP & HLS Streams</span>
-			</div>
-
-			<div class="stat-card glass-card">
-				<div class="stat-header">
-					<Cpu size={20} class="text-emerald" />
-					<span class="stat-label">Data Transferred</span>
-				</div>
-				<span class="stat-value">{metrics ? metrics.bytes_transferred_str || '0 B' : '—'}</span>
-				<span class="stat-sub">Network Output</span>
-			</div>
-
-			<div class="stat-card glass-card">
-				<div class="stat-header">
-					<Activity size={20} class="text-amber" />
-					<span class="stat-label">Avg Response Time</span>
-				</div>
-				<span class="stat-value">
-					{metrics ? `${metrics.avg_response_time_ms.toFixed(1)} ms` : '—'}
-				</span>
-				<span class="stat-sub">Total Errors: {metrics ? metrics.errors : 0}</span>
-			</div>
-		</div>
+		<MetricsPanel {metrics} />
 	{:else if activeSubTab === 'mediainfo'}
 		<div class="section-container glass-card">
 			<div class="section-header">
@@ -195,18 +140,10 @@
 				</div>
 
 				<div class="providers-section">
-					<h4>Configured Providers</h4>
+					<h4>Providers</h4>
 					<div class="provider-list">
 						{#each mediaInfoStatus.providers as p (p.id)}
-							<div class="provider-item glass-card">
-								<div class="provider-info">
-									<span class="provider-title">{p.label} ({p.group})</span>
-									<span class="provider-desc">Provides: {p.provides}</span>
-								</div>
-								<span class="badge {p.enabled ? 'badge-emerald' : 'badge-muted'}">
-									{p.enabled ? 'Enabled' : 'Disabled'}
-								</span>
-							</div>
+							<ProviderCard provider={p} onchange={loadData} />
 						{/each}
 					</div>
 				</div>
@@ -229,10 +166,7 @@
 			<pre class="log-terminal">{filteredLogs().join('\n')}</pre>
 		</div>
 	{:else if activeSubTab === 'config'}
-		<div class="section-container glass-card">
-			<h3>Server Configuration</h3>
-			<pre class="log-terminal">{JSON.stringify(configData, null, 2)}</pre>
-		</div>
+		<ConfigEditor />
 	{/if}
 </div>
 
@@ -291,42 +225,6 @@
 	.sub-tab.active {
 		color: #ffffff;
 		background: var(--accent-cyan);
-	}
-
-	.metrics-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-		gap: 20px;
-	}
-
-	.stat-card {
-		padding: 20px;
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-	}
-
-	.stat-header {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-	}
-
-	.stat-label {
-		font-size: 0.85rem;
-		color: var(--text-muted);
-		font-weight: 600;
-	}
-
-	.stat-value {
-		font-size: 1.8rem;
-		font-weight: 800;
-		color: #ffffff;
-	}
-
-	.stat-sub {
-		font-size: 0.75rem;
-		color: var(--text-secondary);
 	}
 
 	.section-container {
@@ -388,27 +286,8 @@
 
 	.provider-list {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 		gap: 12px;
-	}
-
-	.provider-item {
-		padding: 14px;
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-	}
-
-	.provider-title {
-		font-size: 0.88rem;
-		font-weight: 700;
-
-		display: block;
-	}
-
-	.provider-desc {
-		font-size: 0.75rem;
-		color: var(--text-secondary);
 	}
 
 	.log-controls {

@@ -1,9 +1,10 @@
 import type {
 	BrowseResponse,
+	ConfigSchema,
 	MediaPageResponse,
 	ServerInfo,
 	CastRenderer,
-	WebMetrics,
+	ServerMetrics,
 	MediaInfoStatus
 } from './types';
 
@@ -99,7 +100,7 @@ export async function castControl(rendererId: string, action: 'play' | 'pause' |
 	return res.ok;
 }
 
-export async function fetchMetrics(): Promise<WebMetrics | null> {
+export async function fetchMetrics(): Promise<ServerMetrics | null> {
 	try {
 		const res = await fetch('/metrics/json');
 		if (!res.ok) return null;
@@ -119,10 +120,50 @@ export async function fetchLogs(): Promise<string> {
 	}
 }
 
-export async function fetchConfig(): Promise<any> {
+export async function fetchConfig(): Promise<ConfigSchema> {
 	const res = await fetch('/api/admin/config');
-	if (!res.ok) throw new Error('Failed to fetch config');
+	if (!res.ok) throw new Error(`Failed to fetch config: ${res.statusText}`);
 	return res.json();
+}
+
+/**
+ * Save changed settings.
+ *
+ * Send only what changed: a key mapped to `null` is removed from the file,
+ * restoring whatever default applies, and omitting `directories` entirely leaves
+ * the libraries alone. Sending them back unchanged would rewrite the array and
+ * freeze this version's platform defaults into the operator's file.
+ */
+export async function saveConfig(update: {
+	values: Record<string, unknown>;
+	directories?: unknown[];
+}): Promise<void> {
+	const res = await fetch('/api/admin/config', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(update)
+	});
+	if (!res.ok) {
+		// The server explains itself — unknown key, a required value removed —
+		// and that message is far more useful than the status code.
+		throw new Error(await errorMessage(res, 'Failed to save configuration'));
+	}
+}
+
+/** Stop the server. Something else has to start it again; `supervised` says whether. */
+export async function restartServer(): Promise<{ supervised: boolean }> {
+	const res = await fetch('/api/admin/restart', { method: 'POST' });
+	if (!res.ok) throw new Error(await errorMessage(res, 'Failed to restart'));
+	return res.json();
+}
+
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+	try {
+		const body = await res.json();
+		return body?.error ?? fallback;
+	} catch {
+		return `${fallback}: ${res.statusText}`;
+	}
 }
 
 export async function fetchMediaInfoStatus(): Promise<MediaInfoStatus | null> {
@@ -143,4 +184,19 @@ export async function runMediaInfo(): Promise<boolean> {
 export async function cancelMediaInfo(): Promise<boolean> {
 	const res = await fetch('/api/admin/mediainfo/cancel', { method: 'POST' });
 	return res.ok;
+}
+
+/**
+ * Save a provider API key, or clear it by sending an empty token.
+ *
+ * Clearing does not disable the provider: it falls back to a key supplied to the
+ * server through `VUIO_<ID>_API_KEY`, if there is one.
+ */
+export async function saveCredential(provider: string, token: string): Promise<void> {
+	const res = await fetch('/api/admin/mediainfo/credentials', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ provider, token })
+	});
+	if (!res.ok) throw new Error(await errorMessage(res, 'Failed to save the key'));
 }
