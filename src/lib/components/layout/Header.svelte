@@ -133,12 +133,14 @@
 		padding: 12px 28px;
 		gap: 20px;
 		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+		width: 100%;
 	}
 
 	.brand-section {
 		display: flex;
 		align-items: center;
 		gap: 12px;
+		flex-shrink: 0;
 	}
 
 	.logo-badge {
@@ -171,6 +173,7 @@
 		padding: 4px;
 		border-radius: var(--radius-full);
 		border: 1px solid var(--border-glass);
+		flex-shrink: 0;
 	}
 
 	.nav-tab {
@@ -185,7 +188,8 @@
 		background: transparent;
 		border: none;
 		cursor: pointer;
-		transition: var(--transition-smooth);
+		transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+		white-space: nowrap;
 	}
 
 	.nav-tab:hover {
@@ -203,6 +207,7 @@
 		display: flex;
 		align-items: center;
 		gap: 12px;
+		flex-shrink: 0;
 	}
 
 	.search-box {
