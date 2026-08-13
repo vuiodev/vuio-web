@@ -1,4 +1,5 @@
 import type {
+	BrowseResponse,
 	MediaPageResponse,
 	ServerInfo,
 	CastRenderer,
@@ -42,6 +43,31 @@ export async function fetchMediaPage(
 
 	const res = await fetch(`/api/media?${params.toString()}`);
 	if (!res.ok) throw new Error(`Media fetch error: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * List one directory: its subfolders, then its files.
+ *
+ * Pass `null` for the top of the tree, which lists the configured media roots.
+ * Paging is by offset rather than by cursor because folders and files are one
+ * ordered listing; an offset here is bounded by the size of a single directory
+ * rather than of the library, so it stays cheap however large the library is.
+ */
+export async function fetchBrowse(
+	path: string | null,
+	category = 'all',
+	offset = 0,
+	limit = 250
+): Promise<BrowseResponse> {
+	const params = new URLSearchParams();
+	if (path) params.set('path', path);
+	if (category && category !== 'all') params.set('category', category);
+	params.set('offset', offset.toString());
+	params.set('limit', limit.toString());
+
+	const res = await fetch(`/api/browse?${params.toString()}`);
+	if (!res.ok) throw new Error(`Browse error: ${res.statusText}`);
 	return res.json();
 }
 

@@ -11,14 +11,15 @@
 
 	onMount(async () => {
 		await mediaStore.initServerInfo();
-		await mediaStore.loadMedia(true);
+		await mediaStore.load();
 	});
 
 	let featuredItem = $derived(() => {
-		if (mediaStore.items.length === 0) return null;
+		const files = mediaStore.visibleFiles;
+		if (files.length === 0) return null;
 		// Prefer items with artwork or synopses for the hero banner
-		const richItem = mediaStore.items.find((i: MediaItem) => i.info_art || i.info_overview);
-		return richItem || mediaStore.items[0];
+		const richItem = files.find((i: MediaItem) => i.info_art || i.info_overview);
+		return richItem || files[0];
 	});
 </script>
 
@@ -49,7 +50,9 @@
 						All Library Media
 					{/if}
 				</h2>
-				<span class="count-badge">{mediaStore.items.length} items</span>
+				<!-- The size of the listing, from the server. It used to be the number of
+				     rows the browser happened to have fetched. -->
+				<span class="count-badge">{mediaStore.itemCount.toLocaleString()} items</span>
 			</div>
 
 			<MediaGrid />

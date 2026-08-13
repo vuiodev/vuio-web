@@ -1,36 +1,23 @@
 <script lang="ts">
 	import { mediaStore } from '$lib/stores/mediaStore.svelte';
-	import { playerStore } from '$lib/stores/playerStore.svelte';
-	import { getCoverUrl } from '$lib/api/client';
-	import type { FolderGroup } from '$lib/utils/pathHelper';
-	import { Folder, Play, FolderOpen } from '@lucide/svelte';
+	import type { FolderEntry } from '$lib/api/types';
+	import { Folder, FolderOpen, ChevronRight } from '@lucide/svelte';
 
-	let { folder }: { folder: FolderGroup } = $props();
+	let { folder }: { folder: FolderEntry } = $props();
 
-	// Only return an item if MediaInfo artwork (info_art) actually exists for this folder
-	let coverItem = $derived(() => {
-		if (folder.items.length === 0) return null;
-		const rich = folder.items.find((i) => i.info_art === true);
-		return rich || null;
-	});
-
-	let hasCover = $state(true);
-
+	// No cover art and no play-all button: both used to be derived from the
+	// folder's files, and a card no longer carries them. Fetching them would
+	// cost a query per folder on every screen, which is exactly the work that
+	// moving the folder listing onto the server removed.
 	function handleOpenFolder() {
-		mediaStore.navigateFolder(folder.fullPath);
+		mediaStore.enterFolder(folder.path);
 	}
 
-	function handlePlayFolder(e: MouseEvent) {
-		e.stopPropagation();
-		if (folder.items.length > 0) {
-			const firstAudio = folder.items.find((i) => i.cat === 'audio' || i.cat === 'radio');
-			if (firstAudio) {
-				playerStore.playAudio(firstAudio, folder.items);
-			} else {
-				playerStore.openVideo(folder.items[0]);
-			}
-		}
-	}
+	let itemLabel = $derived(
+		folder.file_count === null
+			? 'Folder'
+			: `${folder.file_count.toLocaleString()} ${folder.file_count === 1 ? 'item' : 'items'}`
+	);
 </script>
 
 <div
@@ -41,24 +28,14 @@
 	onkeydown={(e) => e.key === 'Enter' && handleOpenFolder()}
 >
 	<div class="thumbnail-wrapper">
-		{#if coverItem() && hasCover}
-			<img
-				src={getCoverUrl(coverItem()!.id)}
-				alt={folder.folderName}
-				class="cover-art"
-				loading="lazy"
-				onerror={() => (hasCover = false)}
-			/>
-		{:else}
-			<div class="folder-fallback">
-				<Folder size={52} class="folder-icon" />
-			</div>
-		{/if}
+		<div class="folder-fallback">
+			<Folder size={52} class="folder-icon" />
+		</div>
 
 		<div class="hover-overlay">
-			<button class="play-folder-btn" onclick={handlePlayFolder} title="Play All in Folder">
-				<Play size={22} fill="currentColor" style="margin-left: 2px;" />
-			</button>
+			<div class="open-folder-btn" title="Open folder">
+				<ChevronRight size={22} />
+			</div>
 		</div>
 
 		<div class="folder-badge">
@@ -68,8 +45,8 @@
 	</div>
 
 	<div class="folder-body">
-		<span class="folder-name" title={folder.folderName}>{folder.folderName}</span>
-		<span class="folder-meta">{folder.fileCount} items</span>
+		<span class="folder-name" title={folder.path}>{folder.name}</span>
+		<span class="folder-meta">{itemLabel}</span>
 	</div>
 </div>
 
@@ -88,17 +65,6 @@
 		aspect-ratio: 2/3;
 		overflow: hidden;
 		background: rgba(0, 0, 0, 0.4);
-	}
-
-	.cover-art {
-		width: 100%;
-		height: 100%;
-		object-fit: cover;
-		transition: transform 0.35s ease;
-	}
-
-	.folder-card:hover .cover-art {
-		transform: scale(1.06);
 	}
 
 	.folder-fallback {
@@ -135,22 +101,20 @@
 		opacity: 1;
 	}
 
-	.play-folder-btn {
+	.open-folder-btn {
 		width: 52px;
 		height: 52px;
 		border-radius: var(--radius-full);
 		background: linear-gradient(135deg, var(--accent-cyan), #007bb6);
 		color: #ffffff;
-		border: none;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		cursor: pointer;
 		box-shadow: 0 4px 20px rgba(0, 164, 220, 0.6);
 		transition: transform 0.2s ease, box-shadow 0.2s ease;
 	}
 
-	.play-folder-btn:hover {
+	.folder-card:hover .open-folder-btn {
 		transform: scale(1.12);
 		box-shadow: 0 6px 28px rgba(0, 164, 220, 0.8);
 	}

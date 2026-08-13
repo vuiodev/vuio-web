@@ -26,7 +26,7 @@
 		if (item.cat === 'image') {
 			mediaStore.selectItem(item);
 		} else if (item.cat === 'audio' || item.cat === 'radio') {
-			playerStore.playAudio(item, mediaStore.items);
+			playerStore.playAudio(item, mediaStore.visibleFiles);
 		} else {
 			playerStore.openVideo(item);
 		}

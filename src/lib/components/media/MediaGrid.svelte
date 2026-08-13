@@ -7,18 +7,22 @@
 	import { playerStore } from '$lib/stores/playerStore.svelte';
 	import { Play, Film, Loader2, Folder, ChevronRight, ArrowLeft } from '@lucide/svelte';
 
-	let organized = $derived(mediaStore.organizedMedia);
+	// Folders and files come from the server, already scoped to one directory.
+	// Nothing here groups, sorts or counts the library: on ten million files
+	// this component sees the same handful of rows it sees on ten.
+	let crumbs = $derived(mediaStore.crumbs);
+	let folders = $derived(mediaStore.searching ? [] : mediaStore.folders);
+	let files = $derived(mediaStore.visibleFiles);
+	let isEmpty = $derived(folders.length === 0 && files.length === 0);
 
-	let currentFolderName = $derived(() => {
-		if (mediaStore.currentFolderPath.length === 0) return '';
-		return mediaStore.currentFolderPath[mediaStore.currentFolderPath.length - 1];
-	});
+	let currentFolderName = $derived(crumbs.length > 0 ? crumbs[crumbs.length - 1].label : '');
 
-	// Only show main screen showcase if MediaInfo metadata actually exists
-	let hasShowcase = $derived(() => {
-		if (mediaStore.currentFolderPath.length === 0) return false;
-		return organized.directFiles.some((f) => f.info_art === true || Boolean(f.info_overview));
-	});
+	// Only show the showcase if MediaInfo metadata actually exists
+	let hasShowcase = $derived(
+		!mediaStore.searching &&
+			mediaStore.path !== null &&
+			files.some((f) => f.info_art === true || Boolean(f.info_overview))
+	);
 
 	function handleRowClick(item: any) {
 		mediaStore.selectItem(item);
@@ -27,44 +31,51 @@
 	function handleRowPlay(e: MouseEvent, item: any) {
 		e.stopPropagation();
 		if (item.cat === 'audio' || item.cat === 'radio') {
-			playerStore.playAudio(item, mediaStore.items);
+			playerStore.playAudio(item, files);
 		} else {
 			playerStore.openVideo(item);
 		}
 	}
 </script>
 
-{#if mediaStore.currentFolderPath.length > 0}
+{#if crumbs.length > 0 && !mediaStore.searching}
 	<div class="breadcrumb-bar glass-card">
-		<button class="btn btn-secondary btn-sm" onclick={() => mediaStore.goUpFolder()}>
+		<button
+			class="btn btn-secondary btn-sm"
+			onclick={() => mediaStore.goUp()}
+			disabled={mediaStore.parent === null && mediaStore.monitoredDirs.length < 2}
+		>
 			<ArrowLeft size={16} /> Back
 		</button>
 		<div class="breadcrumbs">
-			<button class="breadcrumb-item" onclick={() => mediaStore.clearFolderPath()}>
-				Root
-			</button>
-			{#each mediaStore.currentFolderPath as folderName, idx}
+			{#if mediaStore.monitoredDirs.length > 1}
+				<button class="breadcrumb-item" onclick={() => mediaStore.goToRoots()}> Libraries </button>
 				<ChevronRight size={14} class="crumb-separator" />
+			{/if}
+			{#each crumbs as crumb, idx (crumb.path)}
+				{#if idx > 0}
+					<ChevronRight size={14} class="crumb-separator" />
+				{/if}
 				<button
-					class="breadcrumb-item {idx === mediaStore.currentFolderPath.length - 1 ? 'active' : ''}"
-					onclick={() => mediaStore.navigateFolder(mediaStore.currentFolderPath.slice(0, idx + 1))}
+					class="breadcrumb-item {idx === crumbs.length - 1 ? 'active' : ''}"
+					onclick={() => crumb.path && mediaStore.enterFolder(crumb.path)}
 				>
-					{folderName}
+					{crumb.label}
 				</button>
 			{/each}
 		</div>
 	</div>
 {/if}
 
-{#if hasShowcase()}
+{#if hasShowcase}
 	<!-- Display MediaInfo Showcase on Main Screen when entering a folder with media -->
-	<FolderShowcase folderName={currentFolderName()} files={organized.directFiles} />
-{:else if mediaStore.isLoading && mediaStore.items.length === 0}
+	<FolderShowcase folderName={currentFolderName} {files} />
+{:else if mediaStore.isLoading && isEmpty}
 	<div class="loading-state">
 		<Loader2 size={36} class="spinner" />
 		<span>Scanning VuIO media library...</span>
 	</div>
-{:else if mediaStore.items.length === 0}
+{:else if isEmpty}
 	<div class="empty-state glass-card">
 		<Film size={48} class="empty-icon" />
 		<h3>No Media Found</h3>
@@ -72,11 +83,11 @@
 	</div>
 {:else if mediaStore.viewMode === 'grid'}
 	<div class="media-grid">
-		{#each organized.subfolders as folder (folder.folderName)}
+		{#each folders as folder (folder.path)}
 			<FolderCard {folder} />
 		{/each}
 
-		{#each organized.directFiles as item (item.id)}
+		{#each files as item (item.id)}
 			<MediaCard {item} />
 		{/each}
 	</div>
@@ -95,16 +106,17 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each organized.subfolders as folder (folder.folderName)}
-					<tr
-						class="table-row folder-row"
-						onclick={() => mediaStore.navigateFolder(folder.fullPath)}
-					>
+				{#each folders as folder (folder.path)}
+					<tr class="table-row folder-row" onclick={() => mediaStore.enterFolder(folder.path)}>
 						<td>
 							<Folder size={22} class="text-cyan" />
 						</td>
-						<td class="cell-title">{folder.folderName}</td>
-						<td class="cell-sub">Folder ({folder.fileCount} items)</td>
+						<td class="cell-title">{folder.name}</td>
+						<td class="cell-sub">
+							{folder.file_count === null
+								? 'Folder'
+								: `Folder (${folder.file_count.toLocaleString()} items)`}
+						</td>
 						<td class="cell-sub">—</td>
 						<td><span class="badge badge-violet">DIR</span></td>
 						<td class="cell-sub">—</td>
@@ -112,7 +124,7 @@
 					</tr>
 				{/each}
 
-				{#each organized.directFiles as item (item.id)}
+				{#each files as item (item.id)}
 					<tr onclick={() => handleRowClick(item)} class="table-row">
 						<td>
 							<img
@@ -144,11 +156,11 @@
 	</div>
 {/if}
 
-{#if mediaStore.nextCursor}
+{#if mediaStore.hasMore}
 	<div class="pagination-box">
 		<button
 			class="btn btn-secondary"
-			onclick={() => mediaStore.loadMedia(false)}
+			onclick={() => mediaStore.loadMore()}
 			disabled={mediaStore.isLoading}
 		>
 			{#if mediaStore.isLoading}
