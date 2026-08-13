@@ -166,55 +166,97 @@
 			</div>
 		{/if}
 
-		<nav class="section-nav">
-			{#each schema.sections as s (s.id)}
+		<div class="admin-layout">
+			<!-- Left Sidebar Nav Categories -->
+			<nav class="section-nav glass-card">
+				<span class="nav-heading">CATEGORIES</span>
+				{#each schema.sections as s (s.id)}
+					<button
+						class="section-tab {activeSection === s.id ? 'active' : ''}"
+						onclick={() => (activeSection = s.id)}
+					>
+						{s.title}
+					</button>
+				{/each}
 				<button
-					class="section-tab {activeSection === s.id ? 'active' : ''}"
-					onclick={() => (activeSection = s.id)}
+					class="section-tab {activeSection === 'runtime' ? 'active' : ''}"
+					onclick={() => (activeSection = 'runtime')}
 				>
-					{s.title}
+					This Server
 				</button>
-			{/each}
-		</nav>
+			</nav>
 
-		{#if section}
+			<!-- Right Settings Pane -->
 			<div class="section-body glass-card">
-				<header>
-					<h3>{section.title}</h3>
-					<p>{section.blurb}</p>
-				</header>
+				{#if activeSection === 'runtime'}
+					<header>
+						<h3>This Server</h3>
+						<p>Where this configuration came from and current server runtime state.</p>
+					</header>
+					<div class="runtime-grid">
+						<div class="runtime-item">
+							<span class="runtime-label">Config file</span>
+							<code class="runtime-val">{schema.runtime.config_path}</code>
+						</div>
+						<div class="runtime-item">
+							<span class="runtime-label">Serving on</span>
+							<span class="runtime-val">{schema.runtime.bound_addr || 'not bound'}</span>
+						</div>
+						<div class="runtime-item">
+							<span class="runtime-label">Editable here</span>
+							<span class="runtime-val">{schema.runtime.writable ? 'Yes' : 'No'}</span>
+						</div>
+						<div class="runtime-item">
+							<span class="runtime-label">Authentication</span>
+							<span class="runtime-val">{schema.runtime.auth_enabled ? 'Required' : 'Not required'}</span>
+						</div>
+						<div class="runtime-item">
+							<span class="runtime-label">Container</span>
+							<span class="runtime-val">{schema.runtime.is_docker ? 'Yes' : 'No'}</span>
+						</div>
+						<div class="runtime-item">
+							<span class="runtime-label">Version</span>
+							<span class="runtime-val">VuIO {schema.runtime.version}</span>
+						</div>
+					</div>
+				{:else if section}
+					<header>
+						<h3>{section.title}</h3>
+						<p>{section.blurb}</p>
+					</header>
 
-				{#if section.directories}
-					<div class="libraries">
-						{#each libraries as library, index (index)}
-							<LibraryCard
-								bind:library={libraries[index]}
-								defaults={schema.library_defaults}
+					{#if section.directories}
+						<div class="libraries">
+							{#each libraries as library, index (index)}
+								<LibraryCard
+									bind:library={libraries[index]}
+									defaults={schema.library_defaults}
+									disabled={readOnly}
+									onremove={() => removeLibrary(index)}
+								/>
+							{/each}
+							{#if libraries.length === 0}
+								<p class="muted">No libraries configured.</p>
+							{/if}
+							<button class="btn btn-secondary" disabled={readOnly} onclick={addLibrary}>
+								<Plus size={16} /> Add library
+							</button>
+						</div>
+					{:else}
+						{#each section.fields as field (field.key)}
+							<ConfigField
+								{field}
+								bind:value={values[field.key]}
+								present={isSet(present, field.key)}
+								onpresentchange={(next) => (present[field.key] = next)}
+								override={schema.overrides[field.key]}
 								disabled={readOnly}
-								onremove={() => removeLibrary(index)}
 							/>
 						{/each}
-						{#if libraries.length === 0}
-							<p class="muted">No libraries configured.</p>
-						{/if}
-						<button class="btn btn-secondary" disabled={readOnly} onclick={addLibrary}>
-							<Plus size={16} /> Add library
-						</button>
-					</div>
-				{:else}
-					{#each section.fields as field (field.key)}
-						<ConfigField
-							{field}
-							bind:value={values[field.key]}
-							present={isSet(present, field.key)}
-							onpresentchange={(next) => (present[field.key] = next)}
-							override={schema.overrides[field.key]}
-							disabled={readOnly}
-						/>
-					{/each}
+					{/if}
 				{/if}
 			</div>
-		{/if}
+		</div>
 
 		<footer class="config-footer glass-card">
 			<div class="footer-info">
@@ -249,58 +291,114 @@
 		gap: 18px;
 	}
 
+	.admin-layout {
+		display: grid;
+		grid-template-columns: 220px 1fr;
+		gap: 20px;
+		align-items: start;
+	}
+
 	.section-nav {
 		display: flex;
-		gap: 6px;
-		flex-wrap: wrap;
-		background: rgba(0, 0, 0, 0.3);
-		padding: 4px;
-		border-radius: var(--radius-full);
+		flex-direction: column;
+		gap: 4px;
+		padding: 12px;
+		position: sticky;
+		top: 80px;
+	}
+
+	.nav-heading {
+		font-size: 0.7rem;
+		font-weight: 800;
+		color: var(--text-muted);
+		letter-spacing: 0.6px;
+		padding: 4px 10px 8px 10px;
 	}
 
 	.section-tab {
-		padding: 6px 14px;
-		border-radius: var(--radius-full);
-		font-size: 0.82rem;
+		padding: 10px 14px;
+		border-radius: var(--radius-md);
+		font-size: 0.88rem;
 		font-weight: 600;
 		color: var(--text-secondary);
 		background: transparent;
 		border: none;
 		cursor: pointer;
+		text-align: left;
 		transition: var(--transition-smooth);
+		width: 100%;
+	}
+
+	.section-tab:hover:not(.active) {
+		background: rgba(255, 255, 255, 0.05);
+		color: var(--text-main);
 	}
 
 	.section-tab.active {
 		color: #ffffff;
 		background: var(--accent-cyan);
+		box-shadow: 0 4px 14px rgba(0, 164, 220, 0.35);
 	}
 
 	.section-body {
-		padding: 20px 24px;
+		padding: 24px;
 		display: flex;
 		flex-direction: column;
+		min-height: 400px;
 	}
 
 	.section-body header {
-		margin-bottom: 8px;
+		margin-bottom: 16px;
+		padding-bottom: 12px;
+		border-bottom: 1px solid var(--border-glass);
 	}
 
 	.section-body h3 {
-		font-size: 1.05rem;
+		font-size: 1.15rem;
 		font-weight: 800;
 	}
 
 	.section-body header p {
-		font-size: 0.82rem;
+		font-size: 0.85rem;
 		color: var(--text-secondary);
-		margin-top: 2px;
+		margin-top: 3px;
+	}
+
+	.runtime-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		gap: 16px;
+		margin-top: 8px;
+	}
+
+	.runtime-item {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		background: rgba(255, 255, 255, 0.04);
+		padding: 12px 16px;
+		border-radius: var(--radius-md);
+		border: 1px solid var(--border-glass);
+	}
+
+	.runtime-label {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.runtime-val {
+		font-size: 0.9rem;
+		font-weight: 700;
+		color: var(--text-main);
 	}
 
 	.libraries {
 		display: flex;
 		flex-direction: column;
 		gap: 14px;
-		padding-top: 12px;
+		padding-top: 4px;
 	}
 
 	.banner {
@@ -381,5 +479,23 @@
 		gap: 12px;
 		padding: 50px;
 		color: var(--text-secondary);
+	}
+
+	@media (max-width: 800px) {
+		.admin-layout {
+			grid-template-columns: 1fr;
+		}
+		.section-nav {
+			flex-direction: row;
+			overflow-x: auto;
+			position: static;
+		}
+		.nav-heading {
+			display: none;
+		}
+		.section-tab {
+			white-space: nowrap;
+			text-align: center;
+		}
 	}
 </style>

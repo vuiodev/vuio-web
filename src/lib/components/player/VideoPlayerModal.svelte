@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { playerStore } from '$lib/stores/playerStore.svelte';
+	import { watchHistoryStore } from '$lib/stores/watchHistoryStore.svelte';
 	import { getMediaStreamUrl, getHlsMasterUrl, getSubtitleVttUrl } from '$lib/api/client';
 	import { X, Download, AlertTriangle } from '@lucide/svelte';
 
@@ -71,6 +72,13 @@
 		} else {
 			videoEl.src = playUrl;
 		}
+
+		// Track progress in watch history
+		videoEl.ontimeupdate = () => {
+			if (item && videoEl && videoEl.currentTime > 2) {
+				watchHistoryStore.updateProgress(item.id, Math.floor(videoEl.currentTime));
+			}
+		};
 
 		// Initialize Plyr instance matching vuio crate setup
 		plyrInstance = new Plyr(videoEl, {

@@ -1,4 +1,5 @@
 import type { MediaItem } from '../api/types';
+import { watchHistoryStore } from './watchHistoryStore.svelte';
 
 class PlayerStore {
 	// Video state
@@ -19,6 +20,7 @@ class PlayerStore {
 	openVideo(item: MediaItem) {
 		this.activeVideoItem = item;
 		this.isVideoOpen = true;
+		watchHistoryStore.recordStartedVideo(item);
 	}
 
 	closeVideo() {
