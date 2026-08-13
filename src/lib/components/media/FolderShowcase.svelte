@@ -242,6 +242,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: 14px;
+		flex: 1;
+		min-width: 0;
 	}
 
 	.badge-row {
@@ -269,8 +271,8 @@
 		line-height: 1.65;
 		color: var(--text-secondary);
 		display: -webkit-box;
-		-webkit-line-clamp: 5;
-		line-clamp: 5;
+		-webkit-line-clamp: 10;
+		line-clamp: 10;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
 	}
