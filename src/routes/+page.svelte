@@ -7,10 +7,12 @@
 	import MediaGrid from '$lib/components/media/MediaGrid.svelte';
 	import MediaCard from '$lib/components/media/MediaCard.svelte';
 	import AdminView from '$lib/components/admin/AdminView.svelte';
+	import RadioStudio from '$lib/components/radio/RadioStudio.svelte';
 	import type { MediaItem } from '$lib/api/types';
-	import { PlayCircle, Film, Trash2 } from '@lucide/svelte';
+	import { PlayCircle, Film, Trash2, Radio, Signal } from '@lucide/svelte';
 
 	let activeTab = $state<'home' | 'video' | 'audio' | 'image' | 'radio' | 'all' | 'admin'>('home');
+	let radioSubTab = $state<'stations' | 'studio'>('stations');
 
 	onMount(async () => {
 		await mediaStore.initServerInfo();
@@ -79,6 +81,32 @@
 				</div>
 			{/if}
 		</div>
+	{:else if activeTab === 'radio'}
+		<div class="content-section">
+			<div class="section-title-row">
+				<h2>Radio & Live Broadcasting</h2>
+				<div class="radio-subtab-group">
+					<button
+						class="radio-subtab-btn {radioSubTab === 'stations' ? 'active' : ''}"
+						onclick={() => (radioSubTab = 'stations')}
+					>
+						<Radio size={16} /> Web Radio Stations
+					</button>
+					<button
+						class="radio-subtab-btn {radioSubTab === 'studio' ? 'active' : ''}"
+						onclick={() => (radioSubTab = 'studio')}
+					>
+						<Signal size={16} /> Radio Broadcast Studio
+					</button>
+				</div>
+			</div>
+
+			{#if radioSubTab === 'studio'}
+				<RadioStudio />
+			{:else}
+				<MediaGrid />
+			{/if}
+		</div>
 	{:else}
 		<div class="content-section">
 			<div class="section-title-row">
@@ -89,8 +117,6 @@
 						Music Albums & Audio
 					{:else if activeTab === 'image'}
 						Photo Gallery
-					{:else if activeTab === 'radio'}
-						Live Radio Stations
 					{:else}
 						All Library Media
 					{/if}
@@ -133,6 +159,42 @@
 		font-weight: 800;
 		color: #ffffff;
 		letter-spacing: -0.5px;
+	}
+
+	.radio-subtab-group {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		background: rgba(0, 0, 0, 0.3);
+		padding: 4px;
+		border-radius: var(--radius-full);
+		border: 1px solid var(--border-glass);
+	}
+
+	.radio-subtab-btn {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 14px;
+		border-radius: var(--radius-full);
+		font-size: 0.82rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		transition: var(--transition-smooth);
+	}
+
+	.radio-subtab-btn:hover {
+		color: var(--text-main);
+		background: rgba(255, 255, 255, 0.06);
+	}
+
+	.radio-subtab-btn.active {
+		color: #ffffff;
+		background: linear-gradient(135deg, var(--accent-cyan), #007bb6);
+		box-shadow: 0 2px 10px rgba(0, 164, 220, 0.3);
 	}
 
 	.badge-action-group {

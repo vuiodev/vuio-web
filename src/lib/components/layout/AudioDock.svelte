@@ -1,9 +1,18 @@
 <script lang="ts">
 	import { playerStore } from '$lib/stores/playerStore.svelte';
 	import { getMediaStreamUrl, getCoverUrl } from '$lib/api/client';
-	import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, ListMusic } from '@lucide/svelte';
+	import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, ListMusic, Radio } from '@lucide/svelte';
 
 	let audioEl: HTMLAudioElement;
+
+	let isRadioStream = $derived(
+		playerStore.activeAudioItem?.cat === 'radio' ||
+		playerStore.activeAudioItem?.mime === 'audio/radio' ||
+		playerStore.activeAudioItem?.ext === 'm3u' ||
+		playerStore.activeAudioItem?.ext === 'pls' ||
+		playerStore.activeAudioItem?.path?.toLowerCase().includes('/radio/') ||
+		playerStore.activeAudioItem?.path?.toLowerCase().includes('\\radio\\')
+	);
 
 	$effect(() => {
 		if (playerStore.activeAudioItem && audioEl) {
@@ -89,7 +98,7 @@
 			<div class="track-details">
 				<span class="track-title">{playerStore.activeAudioItem.title || playerStore.activeAudioItem.name}</span>
 				<span class="track-artist">
-					{playerStore.activeAudioItem.artist || 'Unknown Artist'}
+					{playerStore.activeAudioItem.artist || (isRadioStream ? 'Internet Radio' : 'Unknown Artist')}
 					{#if playerStore.activeAudioItem.album}
 						— {playerStore.activeAudioItem.album}
 					{/if}
@@ -99,7 +108,7 @@
 
 		<div class="player-center">
 			<div class="control-buttons">
-				<button class="btn btn-secondary btn-icon icon-sm" onclick={() => playerStore.prevAudio()}>
+				<button class="btn btn-secondary btn-icon icon-sm" onclick={() => playerStore.prevAudio()} disabled={isRadioStream}>
 					<SkipBack size={16} />
 				</button>
 				<button
@@ -112,22 +121,27 @@
 						<Play size={20} />
 					{/if}
 				</button>
-				<button class="btn btn-secondary btn-icon icon-sm" onclick={() => playerStore.nextAudio()}>
+				<button class="btn btn-secondary btn-icon icon-sm" onclick={() => playerStore.nextAudio()} disabled={isRadioStream}>
 					<SkipForward size={16} />
 				</button>
 			</div>
 
 			<div class="progress-container">
-				<span class="time-text">{formatTime(playerStore.audioProgress)}</span>
-				<input
-					type="range"
-					min="0"
-					max={playerStore.audioDuration || 100}
-					value={playerStore.audioProgress}
-					oninput={handleSeek}
-					class="scrubber"
-				/>
-				<span class="time-text">{formatTime(playerStore.audioDuration)}</span>
+				{#if isRadioStream}
+					<span class="badge badge-cyan live-badge"><Radio size={12} /> LIVE STREAM</span>
+					<span class="time-text live-time">{formatTime(playerStore.audioProgress)}</span>
+				{:else}
+					<span class="time-text">{formatTime(playerStore.audioProgress)}</span>
+					<input
+						type="range"
+						min="0"
+						max={playerStore.audioDuration || 100}
+						value={playerStore.audioProgress}
+						oninput={handleSeek}
+						class="scrubber"
+					/>
+					<span class="time-text">{formatTime(playerStore.audioDuration)}</span>
+				{/if}
 			</div>
 		</div>
 
@@ -240,9 +254,25 @@
 	.progress-container {
 		display: flex;
 		align-items: center;
+		justify-content: center;
 		gap: 10px;
 		width: 100%;
 		max-width: 540px;
+	}
+
+	.live-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.75rem;
+		padding: 4px 10px;
+	}
+
+	.live-time {
+		font-weight: 700;
+		color: var(--accent-cyan);
+		font-size: 0.85rem;
+		width: auto;
 	}
 
 	.time-text {
