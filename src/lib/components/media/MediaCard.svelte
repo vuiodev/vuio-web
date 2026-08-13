@@ -7,12 +7,39 @@
 
 	let { item }: { item: MediaItem } = $props();
 
-	let previewUrl = $derived(() => {
-		if (item.cat === 'image') {
-			return getMediaStreamUrl(item.id);
-		}
-		return getCoverUrl(item.id);
+	const imageExts = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif', 'heic'];
+
+	let isImage = $derived(
+		item.cat === 'image' ||
+			item.mime?.startsWith('image/') ||
+			imageExts.includes(item.ext.toLowerCase())
+	);
+
+	let currentSrc = $state<string | null>(null);
+
+	$effect(() => {
+		currentSrc = isImage ? getMediaStreamUrl(item.id) : getCoverUrl(item.id);
 	});
+
+	function handleImgError() {
+		// If getCoverUrl failed for a video/audio item, try finding a poster or cover image file in the current directory view
+		if (!isImage) {
+			const dirPoster = mediaStore.visibleFiles.find(
+				(f) =>
+					f.cat === 'image' ||
+					f.mime?.startsWith('image/') ||
+					imageExts.includes(f.ext.toLowerCase())
+			);
+			if (dirPoster && currentSrc !== getMediaStreamUrl(dirPoster.id)) {
+				currentSrc = getMediaStreamUrl(dirPoster.id);
+				return;
+			}
+		}
+
+		// Fallback SVG icon
+		currentSrc =
+			'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="240" viewBox="0 0 24 24" fill="none" stroke="%2300a4dc" stroke-width="1.5"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>';
+	}
 
 	function formatDur(secs: number | null): string {
 		if (!secs) return '';
@@ -23,7 +50,7 @@
 
 	function handlePlay(e: MouseEvent) {
 		e.stopPropagation();
-		if (item.cat === 'image') {
+		if (isImage) {
 			mediaStore.selectItem(item);
 		} else if (item.cat === 'audio' || item.cat === 'radio') {
 			playerStore.playAudio(item, mediaStore.visibleFiles);
@@ -40,21 +67,20 @@
 	onclick={() => mediaStore.selectItem(item)}
 	onkeydown={(e) => e.key === 'Enter' && mediaStore.selectItem(item)}
 >
-	<div class="thumbnail-wrapper {item.cat === 'image' ? 'photo-aspect' : ''}">
-		<img
-			src={previewUrl()}
-			alt={item.name}
-			class="cover-art"
-			loading="lazy"
-			onerror={(e) => {
-				(e.target as HTMLImageElement).src =
-					'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="240" viewBox="0 0 24 24" fill="none" stroke="%2300a4dc" stroke-width="1.5"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>';
-			}}
-		/>
+	<div class="thumbnail-wrapper {isImage ? 'photo-aspect' : ''}">
+		{#if currentSrc}
+			<img
+				src={currentSrc}
+				alt={item.name}
+				class="cover-art"
+				loading="lazy"
+				onerror={handleImgError}
+			/>
+		{/if}
 
 		<div class="hover-overlay">
-			<button class="play-btn" onclick={handlePlay} title={item.cat === 'image' ? 'View Photo' : 'Play'}>
-				{#if item.cat === 'image'}
+			<button class="play-btn" onclick={handlePlay} title={isImage ? 'View Photo' : 'Play'}>
+				{#if isImage}
 					<Maximize2 size={22} />
 				{:else}
 					<Play size={24} fill="currentColor" style="margin-left: 3px;" />

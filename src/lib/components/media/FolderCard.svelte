@@ -1,14 +1,71 @@
 <script lang="ts">
 	import { mediaStore } from '$lib/stores/mediaStore.svelte';
+	import { fetchBrowse, getCoverUrl, getMediaStreamUrl } from '$lib/api/client';
 	import type { FolderEntry } from '$lib/api/types';
 	import { Folder, FolderOpen, ChevronRight } from '@lucide/svelte';
 
 	let { folder }: { folder: FolderEntry } = $props();
 
-	// No cover art and no play-all button: both used to be derived from the
-	// folder's files, and a card no longer carries them. Fetching them would
-	// cost a query per folder on every screen, which is exactly the work that
-	// moving the folder listing onto the server removed.
+	let coverUrl = $state<string | null>(null);
+	let hasError = $state<boolean>(false);
+
+	async function findFolderCover(dirPath: string, depth = 0): Promise<string | null> {
+		if (depth > 2) return null;
+		try {
+			const res = await fetchBrowse(dirPath, 'all', 0, 10);
+			const imageExts = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif', 'heic'];
+
+			if (res.files && res.files.length > 0) {
+				// 1. Look for an image file in this directory (poster.jpg, cover.jpg, folder.jpg, or any photo)
+				const imageFile = res.files.find(
+					(f) =>
+						f.cat === 'image' ||
+						f.mime?.startsWith('image/') ||
+						imageExts.includes(f.ext.toLowerCase())
+				);
+				if (imageFile) {
+					return getMediaStreamUrl(imageFile.id);
+				}
+
+				// 2. Look for a media file with scraped info_art
+				const richArt = res.files.find((f) => f.info_art);
+				if (richArt) {
+					return getCoverUrl(richArt.id);
+				}
+
+				// 3. Look for any video or audio file with cover
+				const mediaFile = res.files.find((f) => f.cat === 'video' || f.cat === 'audio');
+				if (mediaFile) {
+					return getCoverUrl(mediaFile.id);
+				}
+			}
+
+			// If this folder has subfolders (e.g. Season 01, Season 02), recurse into subfolders to find artwork
+			if (res.folders && res.folders.length > 0) {
+				for (const sub of res.folders.slice(0, 3)) {
+					const subCover = await findFolderCover(sub.path, depth + 1);
+					if (subCover) return subCover;
+				}
+			}
+		} catch {}
+		return null;
+	}
+
+	$effect(() => {
+		let cancelled = false;
+		if (!folder.path) return;
+
+		findFolderCover(folder.path).then((url) => {
+			if (!cancelled && url) {
+				coverUrl = url;
+			}
+		});
+
+		return () => {
+			cancelled = true;
+		};
+	});
+
 	function handleOpenFolder() {
 		mediaStore.enterFolder(folder.path);
 	}
@@ -28,9 +85,19 @@
 	onkeydown={(e) => e.key === 'Enter' && handleOpenFolder()}
 >
 	<div class="thumbnail-wrapper">
-		<div class="folder-fallback">
-			<Folder size={52} class="folder-icon" />
-		</div>
+		{#if coverUrl && !hasError}
+			<img
+				src={coverUrl}
+				alt={folder.name}
+				class="cover-art"
+				loading="lazy"
+				onerror={() => (hasError = true)}
+			/>
+		{:else}
+			<div class="folder-fallback">
+				<Folder size={52} class="folder-icon" />
+			</div>
+		{/if}
 
 		<div class="hover-overlay">
 			<div class="open-folder-btn" title="Open folder">
@@ -65,6 +132,17 @@
 		aspect-ratio: 2/3;
 		overflow: hidden;
 		background: rgba(0, 0, 0, 0.4);
+	}
+
+	.cover-art {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		transition: transform 0.35s ease;
+	}
+
+	.folder-card:hover .cover-art {
+		transform: scale(1.06);
 	}
 
 	.folder-fallback {
