@@ -5,7 +5,10 @@ import type {
 	ServerInfo,
 	CastRenderer,
 	ServerMetrics,
-	MediaInfoStatus
+	MediaInfoStatus,
+	RadioStation,
+	RadioPeer,
+	BroadcastMode
 } from './types';
 
 export function getMediaStreamUrl(id: number): string {
@@ -199,4 +202,92 @@ export async function saveCredential(provider: string, token: string): Promise<v
 		body: JSON.stringify({ provider, token })
 	});
 	if (!res.ok) throw new Error(await errorMessage(res, 'Failed to save the key'));
+}
+
+// --- Live radio -------------------------------------------------------------
+
+/**
+ * Read the reason a radio request was refused.
+ *
+ * These handlers answer with a plain-text sentence rather than a JSON envelope,
+ * because the message is written for the operator to read: "none of the 12
+ * file(s) in those folders can be broadcast" is the whole answer.
+ */
+async function radioError(res: Response, fallback: string): Promise<string> {
+	try {
+		const text = (await res.text()).trim();
+		return text.length > 0 ? text : `${fallback}: ${res.statusText}`;
+	} catch {
+		return `${fallback}: ${res.statusText}`;
+	}
+}
+
+/** Every station this server has, on the air or not. */
+export async function fetchStations(): Promise<RadioStation[]> {
+	const res = await fetch('/api/radio/admin/stations');
+	if (!res.ok) throw new Error(await radioError(res, 'Could not load the stations'));
+	return res.json();
+}
+
+/**
+ * Every live station on the network, this server's own first.
+ *
+ * Discovery is an mDNS browse on the server side, cached for a few seconds, so
+ * polling this while the tab is open is cheap.
+ */
+export async function fetchRadioPeers(localOnly = false): Promise<RadioPeer[]> {
+	const res = await fetch(`/api/radio/peers${localOnly ? '?local_only=true' : ''}`);
+	if (!res.ok) throw new Error(await radioError(res, 'Could not look for stations'));
+	return res.json();
+}
+
+export interface StationDraft {
+	name: string;
+	genre: string;
+	folders: string[];
+	mode: BroadcastMode;
+}
+
+export async function createStation(draft: StationDraft): Promise<RadioStation> {
+	const res = await fetch('/api/radio/admin/stations', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(draft)
+	});
+	if (!res.ok) throw new Error(await radioError(res, 'Could not create the station'));
+	return res.json();
+}
+
+export async function updateStation(id: number, draft: StationDraft): Promise<RadioStation> {
+	const res = await fetch(`/api/radio/admin/stations/${id}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(draft)
+	});
+	if (!res.ok) throw new Error(await radioError(res, 'Could not save the station'));
+	return res.json();
+}
+
+/** Put a station on the air. It stays there across restarts until stopped. */
+export async function startStation(id: number): Promise<RadioStation> {
+	const res = await fetch(`/api/radio/admin/stations/${id}/start`, { method: 'POST' });
+	if (!res.ok) throw new Error(await radioError(res, 'Could not start the station'));
+	return res.json();
+}
+
+export async function stopStation(id: number): Promise<RadioStation> {
+	const res = await fetch(`/api/radio/admin/stations/${id}/stop`, { method: 'POST' });
+	if (!res.ok) throw new Error(await radioError(res, 'Could not stop the station'));
+	return res.json();
+}
+
+export async function skipTrack(id: number): Promise<RadioStation> {
+	const res = await fetch(`/api/radio/admin/stations/${id}/skip`, { method: 'POST' });
+	if (!res.ok) throw new Error(await radioError(res, 'Could not skip the track'));
+	return res.json();
+}
+
+export async function deleteStation(id: number): Promise<void> {
+	const res = await fetch(`/api/radio/admin/stations/${id}/delete`, { method: 'POST' });
+	if (!res.ok) throw new Error(await radioError(res, 'Could not delete the station'));
 }

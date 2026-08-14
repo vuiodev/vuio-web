@@ -40,6 +40,16 @@ class PlayerStore {
 		}
 	}
 
+	/** Stop playing and clear the dock. */
+	stopAudio() {
+		this.isPlayingAudio = false;
+		this.activeAudioItem = null;
+		this.audioQueue = [];
+		this.audioIndex = -1;
+		this.audioProgress = 0;
+		this.audioDuration = 0;
+	}
+
 	toggleAudioPlay() {
 		this.isPlayingAudio = !this.isPlayingAudio;
 	}

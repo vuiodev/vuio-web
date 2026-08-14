@@ -1,14 +1,14 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { radioBroadcastStore } from '$lib/stores/radioBroadcastStore.svelte';
+	import { onMount, onDestroy } from 'svelte';
+	import { radioStationsStore } from '$lib/stores/radioStationsStore.svelte';
 	import { mediaStore } from '$lib/stores/mediaStore.svelte';
-	import { fetchBrowse, getCoverUrl } from '$lib/api/client';
+	import { fetchBrowse } from '$lib/api/client';
+	import type { BroadcastMode, RadioStation } from '$lib/api/types';
 	import {
 		Radio,
 		Play,
 		Square,
 		SkipForward,
-		SkipBack,
 		Shuffle,
 		ListOrdered,
 		Repeat,
@@ -16,12 +16,14 @@
 		Users,
 		Clock,
 		Activity,
-		CheckSquare,
-		Square as SquareIcon,
 		Copy,
 		Check,
-		ExternalLink,
-		Link as LinkIcon
+		Plus,
+		Pencil,
+		Trash2,
+		Headphones,
+		AlertTriangle,
+		ListMusic
 	} from '@lucide/svelte';
 
 	interface DiscoveredFolder {
@@ -29,404 +31,495 @@
 		path: string;
 	}
 
+	const MODES: Array<{ id: BroadcastMode; label: string; icon: typeof Shuffle }> = [
+		{ id: 'shuffle', label: 'Shuffle', icon: Shuffle },
+		{ id: 'linear', label: 'In order', icon: ListOrdered },
+		{ id: 'loop', label: 'Loop', icon: Repeat }
+	];
+
 	let discoveredFolders = $state<DiscoveredFolder[]>([]);
-	let isLoadingFolders = $state<boolean>(false);
-	let copied = $state<boolean>(false);
+	let loadingFolders = $state<boolean>(false);
+	let copiedUrl = $state<string | null>(null);
+
+	/** The station being edited, or `null` when the editor is closed. */
+	let editing = $state<RadioStation | null>(null);
+	let creating = $state<boolean>(false);
+	let draftName = $state<string>('');
+	let draftGenre = $state<string>('');
+	let draftMode = $state<BroadcastMode>('shuffle');
+	let draftFolders = $state<string[]>([]);
+	let saving = $state<boolean>(false);
+
+	let editorOpen = $derived(creating || editing !== null);
+	let liveCount = $derived(radioStationsStore.liveStations.length);
 
 	onMount(async () => {
-		await radioBroadcastStore.initFromBackend();
-		await discoverAllSubfolders();
+		await radioStationsStore.load();
+		radioStationsStore.startPolling(() => radioStationsStore.load());
+		discoverFolders();
 	});
 
-	async function discoverAllSubfolders() {
-		isLoadingFolders = true;
-		const folderList: DiscoveredFolder[] = [];
+	onDestroy(() => radioStationsStore.stopPolling());
 
+	/**
+	 * Offer the media roots and two levels below them.
+	 *
+	 * Deep enough to pick "Music / Jazz" without typing a path, shallow enough
+	 * not to walk a whole library to build a picker. A station takes whole
+	 * subtrees anyway, so a folder here means everything under it.
+	 */
+	async function discoverFolders() {
+		loadingFolders = true;
+		const folders: DiscoveredFolder[] = [];
 		for (const root of mediaStore.monitoredDirs) {
-			folderList.push({ name: root, path: root });
+			folders.push({ name: root, path: root });
 			try {
 				const page = await fetchBrowse(root, 'all', 0, 100);
 				for (const sub of page.folders) {
-					folderList.push({ name: `${basename(root)} / ${sub.name}`, path: sub.path });
+					folders.push({ name: `${basename(root)} / ${sub.name}`, path: sub.path });
 					try {
-						const deepPage = await fetchBrowse(sub.path, 'all', 0, 50);
-						for (const deepSub of deepPage.folders) {
-							folderList.push({
-								name: `${sub.name} / ${deepSub.name}`,
-								path: deepSub.path
-							});
+						const deeper = await fetchBrowse(sub.path, 'all', 0, 50);
+						for (const leaf of deeper.folders) {
+							folders.push({ name: `${sub.name} / ${leaf.name}`, path: leaf.path });
 						}
-					} catch {}
+					} catch {
+						/* a folder that cannot be listed simply is not offered */
+					}
 				}
-			} catch {}
+			} catch {
+				/* likewise for a root that has gone away */
+			}
 		}
-
-		discoveredFolders = folderList;
-		isLoadingFolders = false;
+		discoveredFolders = folders;
+		loadingFolders = false;
 	}
 
-	function basename(pathStr: string): string {
-		const parts = pathStr.split(/[/\\]/).filter(Boolean);
-		return parts[parts.length - 1] || pathStr;
+	function basename(path: string): string {
+		const parts = path.split(/[/\\]/).filter(Boolean);
+		return parts[parts.length - 1] || path;
 	}
 
-	function getStreamUrl(): string {
-		if (typeof window === 'undefined') return '/api/radio/broadcast/stream';
-		return `${window.location.origin}/api/radio/broadcast/stream`;
+	function openCreate() {
+		creating = true;
+		editing = null;
+		draftName = '';
+		draftGenre = '';
+		draftMode = 'shuffle';
+		draftFolders = [];
 	}
 
-	async function copyStreamUrl() {
+	function openEdit(station: RadioStation) {
+		editing = station;
+		creating = false;
+		draftName = station.name;
+		draftGenre = station.genre;
+		draftMode = station.mode;
+		draftFolders = [...station.folders];
+	}
+
+	function closeEditor() {
+		creating = false;
+		editing = null;
+	}
+
+	function toggleFolder(path: string) {
+		draftFolders = draftFolders.includes(path)
+			? draftFolders.filter((folder) => folder !== path)
+			: [...draftFolders, path];
+	}
+
+	async function saveStation() {
+		if (draftFolders.length === 0) return;
+		saving = true;
+		const draft = {
+			name: draftName.trim() || 'VuIO Radio',
+			genre: draftGenre.trim() || 'Variety',
+			folders: draftFolders,
+			mode: draftMode
+		};
+		const result = editing
+			? await radioStationsStore.save(editing.id, draft)
+			: await radioStationsStore.create(draft);
+		saving = false;
+		if (result) closeEditor();
+	}
+
+	async function removeStation(station: RadioStation) {
+		if (!confirm(`Delete the station "${station.name}"? Anyone listening will be disconnected.`)) {
+			return;
+		}
+		await radioStationsStore.remove(station.id);
+	}
+
+	async function copyUrl(url: string) {
 		try {
-			await navigator.clipboard.writeText(getStreamUrl());
-			copied = true;
-			setTimeout(() => (copied = false), 2500);
-		} catch (e) {
-			console.error('Failed to copy stream URL:', e);
+			await navigator.clipboard.writeText(url);
+			copiedUrl = url;
+			setTimeout(() => (copiedUrl = null), 2500);
+		} catch {
+			/* clipboard access can be refused; the URL is on screen either way */
 		}
 	}
 
-	async function handleStart() {
-		await radioBroadcastStore.startBroadcast(
-			mediaStore.files.length > 0 ? mediaStore.files : mediaStore.visibleFiles
-		);
+	function formatUptime(seconds: number): string {
+		const h = Math.floor(seconds / 3600);
+		const m = Math.floor((seconds % 3600) / 60);
+		const s = seconds % 60;
+		if (h > 0) return `${h}h ${m}m`;
+		if (m > 0) return `${m}m ${s}s`;
+		return `${s}s`;
 	}
 
-	function handleStop() {
-		radioBroadcastStore.stopBroadcast();
+	function modeLabel(mode: BroadcastMode): string {
+		return MODES.find((entry) => entry.id === mode)?.label ?? mode;
 	}
 
-	function formatElapsed(totalSecs: number): string {
-		const h = Math.floor(totalSecs / 3600);
-		const m = Math.floor((totalSecs % 3600) / 60);
-		const s = totalSecs % 60;
-		if (h > 0) {
-			return `${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
-		}
-		return `${m}:${s < 10 ? '0' : ''}${s}`;
+	/** What the dock shows underneath the station name while monitoring. */
+	function nowPlayingLabel(station: RadioStation): string | undefined {
+		if (!station.now_playing) return undefined;
+		const { artist, title } = station.now_playing;
+		return artist ? `${artist} - ${title}` : title;
 	}
 </script>
 
-<div class="radio-studio-container">
+<div class="studio">
 	<div class="studio-header glass-card">
 		<div class="header-main">
-			<div class="icon-circle">
-				<Radio size={28} class="text-cyan" />
-			</div>
+			<div class="icon-circle"><Radio size={26} class="text-cyan" /></div>
 			<div>
-				<h2>ICY Radio Broadcast Studio</h2>
+				<h2>Radio Broadcast Studio</h2>
 				<p class="subtitle">
-					Create your live SHOUTcast/Icecast radio station stream with ICY StreamTitle metadata from local audio files.
+					Run stations from folders in your library. The server does the broadcasting: a station
+					keeps playing when this page is closed, and comes back on the air by itself after a
+					restart until you stop it here.
 				</p>
 			</div>
 		</div>
-
-		<div class="status-indicator-badge {radioBroadcastStore.isBroadcasting ? 'live' : 'offline'}">
-			<Activity size={16} />
-			<span>{radioBroadcastStore.isBroadcasting ? 'ONLINE • BROADCASTING' : 'OFFLINE'}</span>
+		<div class="header-actions">
+			<div class="status-badge {liveCount > 0 ? 'live' : 'offline'}">
+				<Activity size={15} />
+				<span>{liveCount > 0 ? `${liveCount} ON THE AIR` : 'NOTHING ON THE AIR'}</span>
+			</div>
+			<button class="btn btn-primary" onclick={openCreate}>
+				<Plus size={16} /> New Station
+			</button>
 		</div>
 	</div>
 
-	<div class="studio-grid">
-		<!-- Left: Controls & Folder Config -->
-		<div class="studio-sidebar glass-card">
-			<h3><Radio size={18} /> Station Configuration</h3>
+	{#if radioStationsStore.error}
+		<div class="error-banner glass-card">
+			<AlertTriangle size={18} />
+			<span>{radioStationsStore.error}</span>
+		</div>
+	{/if}
 
-			<div class="form-group">
-				<label for="station-name">Station Name</label>
-				<input
-					id="station-name"
-					type="text"
-					value={radioBroadcastStore.stationName}
-					oninput={(e) => radioBroadcastStore.setStationName((e.target as HTMLInputElement).value)}
-					placeholder="e.g. VuIO Chillout FM"
-				/>
-			</div>
+	{#if editorOpen}
+		<div class="editor glass-card">
+			<h3>{creating ? 'New station' : `Editing ${editing?.name}`}</h3>
 
-			<div class="form-group">
-				<label for="station-genre">Station Genre</label>
-				<input
-					id="station-genre"
-					type="text"
-					value={radioBroadcastStore.stationGenre}
-					oninput={(e) => radioBroadcastStore.setStationGenre((e.target as HTMLInputElement).value)}
-					placeholder="e.g. Rock / Hits / Live Radio"
-				/>
-			</div>
+			<div class="editor-grid">
+				<div class="form-group">
+					<label for="station-name">Station name</label>
+					<input id="station-name" type="text" bind:value={draftName} placeholder="Kitchen Radio" />
+				</div>
 
-			<div class="form-group">
-				<span class="form-label">Broadcast Sequence Mode</span>
-				<div class="mode-selector">
-					<button
-						class="mode-btn {radioBroadcastStore.playbackMode === 'shuffle' ? 'active' : ''}"
-						onclick={() => radioBroadcastStore.setPlaybackMode('shuffle')}
-						title="Shuffle / Random"
-					>
-						<Shuffle size={16} />
-						<span>Shuffle</span>
-					</button>
-					<button
-						class="mode-btn {radioBroadcastStore.playbackMode === 'linear' ? 'active' : ''}"
-						onclick={() => radioBroadcastStore.setPlaybackMode('linear')}
-						title="Linear / In Order"
-					>
-						<ListOrdered size={16} />
-						<span>Linear</span>
-					</button>
-					<button
-						class="mode-btn {radioBroadcastStore.playbackMode === 'loop' ? 'active' : ''}"
-						onclick={() => radioBroadcastStore.setPlaybackMode('loop')}
-						title="Loop Playlist"
-					>
-						<Repeat size={16} />
-						<span>Loop</span>
-					</button>
+				<div class="form-group">
+					<label for="station-genre">Genre</label>
+					<input id="station-genre" type="text" bind:value={draftGenre} placeholder="Variety" />
+				</div>
+
+				<div class="form-group">
+					<span class="form-label">Play order</span>
+					<div class="mode-selector">
+						{#each MODES as mode (mode.id)}
+							<button
+								class="mode-btn {draftMode === mode.id ? 'active' : ''}"
+								onclick={() => (draftMode = mode.id)}
+							>
+								<mode.icon size={14} />
+								{mode.label}
+							</button>
+						{/each}
+					</div>
+					{#if draftMode === 'linear'}
+						<span class="hint">Stops when it reaches the end of the folders.</span>
+					{/if}
 				</div>
 			</div>
 
 			<div class="form-group">
-				<div class="folder-header-row">
-					<span class="form-label"><FolderTree size={14} /> Select Subfolders to Cast</span>
-					{#if radioBroadcastStore.selectedFolders.length > 0}
-						<button class="clear-selection-btn" onclick={() => (radioBroadcastStore.selectedFolders = [])}>
-							Clear ({radioBroadcastStore.selectedFolders.length})
-						</button>
+				<div class="folder-header">
+					<span class="form-label"><FolderTree size={14} /> Folders ({draftFolders.length})</span>
+					{#if draftFolders.length > 0}
+						<button class="link-btn" onclick={() => (draftFolders = [])}>Clear</button>
 					{/if}
 				</div>
 
-				{#if isLoadingFolders}
-					<p class="meta-hint">Scanning media library folders...</p>
-				{:else if discoveredFolders.length > 0}
-					<div class="folders-list">
+				{#if loadingFolders}
+					<span class="hint">Reading the library…</span>
+				{:else if discoveredFolders.length === 0}
+					<span class="hint">No media folders are configured yet.</span>
+				{:else}
+					<div class="folders">
 						{#each discoveredFolders as folder (folder.path)}
-							{@const isSelected = radioBroadcastStore.selectedFolders.includes(folder.path)}
 							<button
-								class="folder-item {isSelected ? 'selected' : ''}"
-								onclick={() => radioBroadcastStore.toggleFolderSelection(folder.path)}
+								class="folder {draftFolders.includes(folder.path) ? 'selected' : ''}"
+								onclick={() => toggleFolder(folder.path)}
+								title={folder.path}
 							>
-								{#if isSelected}
-									<CheckSquare size={16} class="text-cyan" />
+								{#if draftFolders.includes(folder.path)}
+									<Check size={14} />
 								{:else}
-									<SquareIcon size={16} class="text-muted" />
+									<FolderTree size={14} />
 								{/if}
-								<span class="folder-path" title={folder.path}>{folder.name}</span>
+								<span class="folder-name">{folder.name}</span>
 							</button>
 						{/each}
 					</div>
-				{:else}
-					<p class="meta-hint">All library audio files included by default.</p>
 				{/if}
 			</div>
 
-			<div class="broadcast-controls">
-				{#if !radioBroadcastStore.isBroadcasting}
-					<button class="btn btn-primary btn-block" onclick={handleStart}>
-						<Play size={18} fill="currentColor" /> Start Station Broadcast
-					</button>
-				{:else}
-					<button class="btn btn-secondary btn-danger btn-block" onclick={handleStop}>
-						<Square size={18} fill="currentColor" /> Stop Station Broadcast
-					</button>
+			<div class="editor-actions">
+				<button
+					class="btn btn-primary"
+					onclick={saveStation}
+					disabled={saving || draftFolders.length === 0}
+				>
+					{saving ? 'Saving…' : creating ? 'Create station' : 'Save changes'}
+				</button>
+				<button class="btn btn-secondary" onclick={closeEditor}>Cancel</button>
+				{#if draftFolders.length === 0}
+					<span class="hint">Pick at least one folder.</span>
 				{/if}
 			</div>
 		</div>
+	{/if}
 
-		<!-- Right: Live Monitor & ICY Metadata Stream -->
-		<div class="studio-main glass-card">
-			<div class="monitor-header">
-				<h3><Activity size={18} /> Live Broadcast Monitor</h3>
-				<div class="stats-pills">
-					<span class="stat-pill"><Users size={14} /> {radioBroadcastStore.listenersCount} Listeners</span>
-					<span class="stat-pill"><Clock size={14} /> {formatElapsed(radioBroadcastStore.elapsedBroadcastSecs)}</span>
-				</div>
-			</div>
+	{#if radioStationsStore.stations.length === 0 && !radioStationsStore.loading}
+		<div class="empty glass-card">
+			<Radio size={48} class="text-cyan" />
+			<h3>No stations yet</h3>
+			<p>
+				A station takes one or more folders and plays them as a continuous stream that anything on
+				your network can tune into — another VuIO server, a hi-fi, VLC, or a browser.
+			</p>
+			<button class="btn btn-primary" onclick={openCreate}><Plus size={16} /> New Station</button>
+		</div>
+	{/if}
 
-			{#if radioBroadcastStore.isBroadcasting}
-				<div class="stream-url-card">
-					<div class="stream-url-info">
-						<span class="stream-url-title"><LinkIcon size={14} class="text-cyan" /> LIVE BROADCAST STREAM URL</span>
-						<code class="stream-url-code">{getStreamUrl()}</code>
+	<div class="stations">
+		{#each radioStationsStore.stations as station (station.id)}
+			<div class="station glass-card {station.is_live ? 'is-live' : ''}">
+				<div class="station-head">
+					<div class="station-identity">
+						<span class="station-name">{station.name}</span>
+						<span class="station-meta">
+							{station.genre} · {modeLabel(station.mode)}
+							{#if station.codec}· {station.codec.toUpperCase()}{/if}
+						</span>
 					</div>
-					<div class="stream-url-actions">
-						<button class="btn btn-secondary btn-sm" onclick={copyStreamUrl}>
-							{#if copied}
-								<Check size={14} class="text-cyan" /> Link Copied!
-							{:else}
-								<Copy size={14} /> Copy Link
-							{/if}
-						</button>
-						<a
-							href={getStreamUrl()}
-							target="_blank"
-							rel="noopener noreferrer"
-							class="btn btn-primary btn-sm"
-						>
-							<ExternalLink size={14} /> Open Stream
-						</a>
+					<div class="status-badge {station.is_live ? 'live' : 'offline'}">
+						<Activity size={14} />
+						<span>{station.is_live ? 'ON THE AIR' : 'OFF THE AIR'}</span>
 					</div>
 				</div>
-			{/if}
 
-			{#if radioBroadcastStore.isBroadcasting && radioBroadcastStore.currentTrack}
-				<div class="now-playing-banner">
-					<img
-						src={getCoverUrl(radioBroadcastStore.currentTrack.id)}
-						alt="Cover"
-						class="banner-cover"
-						onerror={(e) => {
-							(e.target as HTMLImageElement).src =
-								'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="%2300a4dc" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>';
-						}}
-					/>
-					<div class="banner-details">
-						<span class="now-playing-label">CURRENTLY BROADCASTING</span>
-						<h2 class="track-title">
-							{radioBroadcastStore.currentTrack.info_title ||
-								radioBroadcastStore.currentTrack.title ||
-								radioBroadcastStore.currentTrack.name}
-						</h2>
-						<p class="track-artist">
-							{radioBroadcastStore.currentTrack.artist || 'Unknown Artist'}
-							{#if radioBroadcastStore.currentTrack.album}
-								— {radioBroadcastStore.currentTrack.album}
+				{#if station.is_live}
+					<div class="now-playing">
+						{#if station.now_playing}
+							<span class="np-label">Now playing</span>
+							<span class="np-title">{station.now_playing.title}</span>
+							{#if station.now_playing.artist}
+								<span class="np-artist">{station.now_playing.artist}</span>
 							{/if}
-						</p>
+						{:else}
+							<span class="np-label">Starting…</span>
+						{/if}
+					</div>
 
-						<div class="track-actions">
-							<button
-								class="btn btn-secondary btn-sm"
-								onclick={() => radioBroadcastStore.prevTrack()}
+					<div class="stats">
+						<span class="stat"><Users size={14} /> {station.listeners} listening</span>
+						<span class="stat"><Clock size={14} /> {formatUptime(station.uptime_secs)}</span>
+						<span class="stat"><ListMusic size={14} /> {station.queue_len} tracks</span>
+						{#if station.skipped_files > 0}
+							<span
+								class="stat warn"
+								title="Only MP3 and AAC can be broadcast without re-encoding. Everything else in these folders is left out."
 							>
-								<SkipBack size={14} /> Previous Track
-							</button>
-							<button
-								class="btn btn-primary btn-sm"
-								onclick={() => radioBroadcastStore.nextTrack()}
-							>
-								<SkipForward size={14} /> Next Track
+								<AlertTriangle size={14} /> {station.skipped_files} skipped
+							</span>
+						{/if}
+					</div>
+
+					{#if station.stream_url}
+						<div class="stream-url">
+							<div class="url-text">
+								<span class="url-label">Stream URL</span>
+								<code>{station.stream_url}</code>
+							</div>
+							<button class="btn btn-secondary btn-sm" onclick={() => copyUrl(station.stream_url!)}>
+								{#if copiedUrl === station.stream_url}
+									<Check size={14} /> Copied
+								{:else}
+									<Copy size={14} /> Copy
+								{/if}
 							</button>
 						</div>
-					</div>
-				</div>
+					{/if}
+				{:else}
+					<p class="folders-summary">
+						{station.folders.length}
+						{station.folders.length === 1 ? 'folder' : 'folders'}: {station.folders.join(', ')}
+					</p>
+				{/if}
 
-				<div class="icy-metadata-box">
-					<div class="icy-header">
-						<span class="icy-title">ICY Stream Protocol Metadata (Header & Interleaving)</span>
-						<span class="icy-badge">metaint: 16000 bytes</span>
-					</div>
-					<pre class="icy-code"><code>icy-name: {radioBroadcastStore.stationName}
-icy-genre: {radioBroadcastStore.stationGenre}
-icy-pub: 1
-icy-br: 320
-icy-metaint: 16000
-
-{radioBroadcastStore.icyMetadata}</code></pre>
+				<div class="station-actions">
+					{#if station.is_live}
+						<button class="btn btn-danger btn-sm" onclick={() => radioStationsStore.stop(station.id)}>
+							<Square size={14} /> Stop
+						</button>
+						<button class="btn btn-secondary btn-sm" onclick={() => radioStationsStore.skip(station.id)}>
+							<SkipForward size={14} /> Skip
+						</button>
+						{#if radioStationsStore.isListeningTo(station.stream_url)}
+							<button
+								class="btn btn-secondary btn-sm listening"
+								onclick={() => radioStationsStore.stopListening()}
+							>
+								<Headphones size={14} /> Stop listening
+							</button>
+						{:else}
+							<button
+								class="btn btn-secondary btn-sm"
+								onclick={() => radioStationsStore.listen(station, nowPlayingLabel(station))}
+								title="Monitor this station here. Broadcasting does not play anything on its own."
+							>
+								<Headphones size={14} /> Listen
+							</button>
+						{/if}
+					{:else}
+						<button class="btn btn-primary btn-sm" onclick={() => radioStationsStore.start(station.id)}>
+							<Play size={14} /> Start broadcasting
+						</button>
+					{/if}
+					<button class="btn btn-secondary btn-sm" onclick={() => openEdit(station)}>
+						<Pencil size={14} /> Edit
+					</button>
+					<button class="btn btn-danger btn-sm" onclick={() => removeStation(station)}>
+						<Trash2 size={14} /> Delete
+					</button>
 				</div>
-
-				<div class="queue-preview">
-					<h4>Upcoming Track Queue ({radioBroadcastStore.playlistQueue.length} tracks)</h4>
-					<div class="queue-list">
-						{#each radioBroadcastStore.playlistQueue.slice(radioBroadcastStore.currentTrackIndex + 1, radioBroadcastStore.currentTrackIndex + 6) as item, idx}
-							<div class="queue-row">
-								<span class="queue-idx">#{idx + 1}</span>
-								<span class="queue-name">{item.info_title || item.title || item.name}</span>
-								<span class="queue-artist">{item.artist || 'Unknown Artist'}</span>
-							</div>
-						{/each}
-					</div>
-				</div>
-			{:else}
-				<div class="idle-studio-state">
-					<Radio size={64} class="text-muted" />
-					<h3>Station Offline</h3>
-					<p>Select specific subfolders on the left and click <strong>Start Station Broadcast</strong> to stream local MP3/FLAC audio files with live ICY metadata.</p>
-				</div>
-			{/if}
-		</div>
+			</div>
+		{/each}
 	</div>
 </div>
 
 <style>
-	.radio-studio-container {
+	.studio {
 		display: flex;
 		flex-direction: column;
-		gap: 20px;
-		width: 100%;
+		gap: 18px;
 	}
 
 	.studio-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 20px 24px;
+		gap: 20px;
+		padding: 22px;
+		flex-wrap: wrap;
 	}
 
 	.header-main {
 		display: flex;
 		align-items: center;
 		gap: 16px;
+		flex: 1;
+		min-width: 320px;
+	}
+
+	.header-actions {
+		display: flex;
+		align-items: center;
+		gap: 12px;
 	}
 
 	.icon-circle {
-		width: 48px;
-		height: 48px;
-		border-radius: var(--radius-full);
-		background: rgba(0, 164, 220, 0.15);
-		border: 1px solid rgba(0, 164, 220, 0.3);
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		width: 52px;
+		height: 52px;
+		border-radius: 50%;
+		background: rgba(0, 164, 220, 0.15);
+		border: 1px solid rgba(0, 164, 220, 0.3);
+		flex-shrink: 0;
+	}
+
+	.studio-header h2 {
+		font-size: 1.25rem;
+		font-weight: 800;
+		color: #ffffff;
 	}
 
 	.subtitle {
 		font-size: 0.85rem;
 		color: var(--text-secondary);
-		margin-top: 2px;
+		max-width: 620px;
+		line-height: 1.5;
+		margin-top: 4px;
 	}
 
-	.status-indicator-badge {
-		display: inline-flex;
+	.status-badge {
+		display: flex;
 		align-items: center;
 		gap: 8px;
 		padding: 6px 14px;
 		border-radius: var(--radius-full);
-		font-size: 0.8rem;
-		font-weight: 700;
+		font-size: 0.72rem;
+		font-weight: 800;
 		letter-spacing: 0.5px;
-	}
-
-	.status-indicator-badge.offline {
-		background: rgba(255, 255, 255, 0.08);
+		background: rgba(255, 255, 255, 0.06);
 		color: var(--text-muted);
 		border: 1px solid var(--border-glass);
+		white-space: nowrap;
 	}
 
-	.status-indicator-badge.live {
-		background: rgba(16, 185, 129, 0.2);
+	.status-badge.live {
+		background: rgba(16, 185, 129, 0.18);
 		color: var(--accent-emerald);
-		border: 1px solid rgba(16, 185, 129, 0.4);
-		box-shadow: 0 0 16px rgba(16, 185, 129, 0.3);
+		border-color: rgba(16, 185, 129, 0.4);
 	}
 
-	.studio-grid {
-		display: grid;
-		grid-template-columns: 340px 1fr;
-		gap: 20px;
+	.error-banner {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 14px 18px;
+		color: var(--accent-rose);
+		border: 1px solid rgba(244, 63, 94, 0.4);
+		background: rgba(244, 63, 94, 0.12);
+		font-size: 0.88rem;
 	}
 
-	.studio-sidebar {
+	.editor {
 		display: flex;
 		flex-direction: column;
 		gap: 18px;
-		padding: 20px;
+		padding: 22px;
 	}
 
-	.studio-sidebar h3 {
-		display: flex;
-		align-items: center;
-		gap: 8px;
+	.editor h3 {
 		font-size: 1.05rem;
+		font-weight: 700;
 		border-bottom: 1px solid var(--border-glass);
 		padding-bottom: 12px;
+	}
+
+	.editor-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+		gap: 18px;
 	}
 
 	.form-group {
@@ -437,26 +530,14 @@ icy-metaint: 16000
 
 	.form-group label,
 	.form-label {
-		font-size: 0.8rem;
-		font-weight: 600;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.75rem;
+		font-weight: 700;
 		color: var(--text-secondary);
 		text-transform: uppercase;
 		letter-spacing: 0.5px;
-	}
-
-	.folder-header-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-	}
-
-	.clear-selection-btn {
-		background: none;
-		border: none;
-		color: var(--accent-cyan);
-		font-size: 0.75rem;
-		font-weight: 600;
-		cursor: pointer;
 	}
 
 	.form-group input[type='text'] {
@@ -484,9 +565,9 @@ icy-metaint: 16000
 		align-items: center;
 		justify-content: center;
 		gap: 6px;
-		padding: 8px 10px;
+		padding: 9px 10px;
 		border-radius: var(--radius-md);
-		font-size: 0.8rem;
+		font-size: 0.78rem;
 		font-weight: 600;
 		background: rgba(255, 255, 255, 0.06);
 		border: 1px solid var(--border-glass);
@@ -501,15 +582,31 @@ icy-metaint: 16000
 		border-color: var(--accent-cyan);
 	}
 
-	.folders-list {
+	.folder-header {
 		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		max-height: 220px;
-		overflow-y: auto;
+		align-items: center;
+		justify-content: space-between;
 	}
 
-	.folder-item {
+	.link-btn {
+		background: none;
+		border: none;
+		color: var(--accent-cyan);
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.folders {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+		gap: 6px;
+		max-height: 260px;
+		overflow-y: auto;
+		padding-right: 4px;
+	}
+
+	.folder {
 		display: flex;
 		align-items: center;
 		gap: 8px;
@@ -519,262 +616,217 @@ icy-metaint: 16000
 		border: 1px solid var(--border-glass);
 		color: var(--text-secondary);
 		cursor: pointer;
-		font-size: 0.82rem;
+		font-size: 0.8rem;
 		text-align: left;
 	}
 
-	.folder-item.selected {
+	.folder.selected {
 		background: rgba(0, 164, 220, 0.15);
 		color: var(--text-main);
 		border-color: var(--accent-cyan);
 	}
 
-	.folder-path {
+	.folder-name {
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 
-	.meta-hint {
-		font-size: 0.8rem;
+	.editor-actions {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		flex-wrap: wrap;
+	}
+
+	.hint {
+		font-size: 0.78rem;
 		color: var(--text-muted);
 		font-style: italic;
 	}
 
-	.broadcast-controls {
-		margin-top: 10px;
+	.empty {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 14px;
+		padding: 56px 24px;
+		text-align: center;
 	}
 
-	.btn-block {
-		width: 100%;
-		justify-content: center;
-		padding: 12px;
-		font-size: 0.95rem;
+	.empty h3 {
+		font-size: 1.15rem;
+		font-weight: 800;
+		color: #ffffff;
+	}
+
+	.empty p {
+		font-size: 0.88rem;
+		color: var(--text-secondary);
+		max-width: 480px;
+		line-height: 1.5;
+	}
+
+	.stations {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+		gap: 16px;
+	}
+
+	.station {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		padding: 20px;
+	}
+
+	.station.is-live {
+		border-color: rgba(16, 185, 129, 0.35);
+	}
+
+	.station-head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.station-identity {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 0;
+	}
+
+	.station-name {
+		font-size: 1.05rem;
+		font-weight: 800;
+		color: #ffffff;
+	}
+
+	.station-meta {
+		font-size: 0.78rem;
+		color: var(--text-muted);
+	}
+
+	.now-playing {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 12px 14px;
+		border-radius: var(--radius-md);
+		background: rgba(16, 185, 129, 0.08);
+		border: 1px solid rgba(16, 185, 129, 0.25);
+	}
+
+	.np-label {
+		font-size: 0.68rem;
+		font-weight: 800;
+		letter-spacing: 0.6px;
+		text-transform: uppercase;
+		color: var(--accent-emerald);
+	}
+
+	.np-title {
+		font-size: 0.92rem;
+		font-weight: 600;
+		color: var(--text-main);
+	}
+
+	.np-artist {
+		font-size: 0.8rem;
+		color: var(--text-secondary);
+	}
+
+	.stats {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 14px;
+	}
+
+	.stat {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.78rem;
+		color: var(--text-secondary);
+	}
+
+	.stat.warn {
+		color: var(--accent-amber, #f59e0b);
+		cursor: help;
+	}
+
+	.stream-url {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 10px 14px;
+		border-radius: var(--radius-md);
+		background: rgba(0, 164, 220, 0.08);
+		border: 1px solid rgba(0, 164, 220, 0.3);
+	}
+
+	.url-text {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+
+	.url-label {
+		font-size: 0.66rem;
+		font-weight: 800;
+		letter-spacing: 0.6px;
+		text-transform: uppercase;
+		color: var(--accent-cyan);
+	}
+
+	.url-text code {
+		font-size: 0.76rem;
+		color: var(--text-secondary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.folders-summary {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+	}
+
+	.station-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: auto;
+		padding-top: 4px;
 	}
 
 	.btn-danger {
-		background: rgba(244, 63, 94, 0.2);
+		background: rgba(244, 63, 94, 0.18);
 		color: var(--accent-rose);
 		border-color: rgba(244, 63, 94, 0.4);
 	}
 
 	.btn-danger:hover {
-		background: rgba(244, 63, 94, 0.35);
+		background: rgba(244, 63, 94, 0.32);
 	}
 
-	.studio-main {
-		display: flex;
-		flex-direction: column;
-		gap: 20px;
-		padding: 20px;
-	}
-
-	.monitor-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		border-bottom: 1px solid var(--border-glass);
-		padding-bottom: 12px;
-	}
-
-	.stream-url-card {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 14px 18px;
-		border-radius: var(--radius-md);
-		background: rgba(0, 164, 220, 0.08);
-		border: 1px solid rgba(0, 164, 220, 0.3);
-		gap: 16px;
-		flex-wrap: wrap;
-	}
-
-	.stream-url-info {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-
-	.stream-url-title {
-		font-size: 0.72rem;
-		font-weight: 800;
-		letter-spacing: 0.8px;
-		color: var(--accent-cyan);
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
-
-	.stream-url-code {
-		font-family: monospace;
-		font-size: 0.88rem;
-		color: #ffffff;
-		background: rgba(0, 0, 0, 0.4);
-		padding: 4px 8px;
-		border-radius: var(--radius-sm);
-		user-select: all;
-	}
-
-	.stream-url-actions {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-	}
-
-	.stats-pills {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-	}
-
-	.stat-pill {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 4px 10px;
-		border-radius: var(--radius-full);
-		background: rgba(255, 255, 255, 0.06);
-		border: 1px solid var(--border-glass);
-		font-size: 0.78rem;
-		color: var(--text-secondary);
-	}
-
-	.now-playing-banner {
-		display: flex;
-		align-items: center;
-		gap: 20px;
-		padding: 16px;
-		border-radius: var(--radius-md);
-		background: rgba(0, 0, 0, 0.3);
-		border: 1px solid var(--border-glass);
-	}
-
-	.banner-cover {
-		width: 110px;
-		height: 110px;
-		border-radius: var(--radius-md);
-		object-fit: cover;
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-	}
-
-	.banner-details {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-
-	.now-playing-label {
-		font-size: 0.7rem;
-		font-weight: 800;
-		color: var(--accent-cyan);
-		letter-spacing: 1px;
-	}
-
-	.track-title {
-		font-size: 1.25rem;
-		font-weight: 800;
-	}
-
-	.track-artist {
-		font-size: 0.9rem;
-		color: var(--text-secondary);
-	}
-
-	.track-actions {
-		display: flex;
-		gap: 10px;
-		margin-top: 10px;
-	}
-
-	.icy-metadata-box {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		padding: 14px;
-		border-radius: var(--radius-md);
-		background: rgba(11, 14, 20, 0.8);
-		border: 1px solid var(--border-glass);
-	}
-
-	.icy-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-	}
-
-	.icy-title {
-		font-size: 0.78rem;
-		font-weight: 700;
-		color: var(--text-secondary);
-		text-transform: uppercase;
-	}
-
-	.icy-badge {
-		font-size: 0.7rem;
-		color: var(--accent-cyan);
-		background: rgba(0, 164, 220, 0.15);
-		padding: 2px 6px;
-		border-radius: 4px;
-	}
-
-	.icy-code {
-		font-family: monospace;
-		font-size: 0.82rem;
+	.listening {
 		color: var(--accent-emerald);
-		white-space: pre-wrap;
+		border-color: rgba(16, 185, 129, 0.4);
 	}
 
-	.queue-preview {
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-	}
-
-	.queue-list {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-
-	.queue-row {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 8px 12px;
-		border-radius: var(--radius-sm);
-		background: rgba(255, 255, 255, 0.03);
-		font-size: 0.85rem;
-	}
-
-	.queue-idx {
-		font-weight: 700;
-		color: var(--accent-cyan);
-		width: 24px;
-	}
-
-	.queue-name {
-		font-weight: 600;
-		color: var(--text-main);
-		flex: 1;
-	}
-
-	.queue-artist {
-		color: var(--text-secondary);
-		font-size: 0.8rem;
-	}
-
-	.idle-studio-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: 60px 20px;
-		text-align: center;
-		gap: 12px;
-	}
-
-	@media (max-width: 900px) {
-		.studio-grid {
+	@media (max-width: 640px) {
+		.stations {
 			grid-template-columns: 1fr;
 		}
 	}

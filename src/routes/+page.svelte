@@ -8,11 +8,18 @@
 	import MediaCard from '$lib/components/media/MediaCard.svelte';
 	import AdminView from '$lib/components/admin/AdminView.svelte';
 	import RadioStudio from '$lib/components/radio/RadioStudio.svelte';
+	import LocalStations from '$lib/components/radio/LocalStations.svelte';
 	import type { MediaItem } from '$lib/api/types';
-	import { PlayCircle, Film, Trash2, Radio, Signal } from '@lucide/svelte';
+	import { PlayCircle, Film, Trash2, Radio, Signal, Server } from '@lucide/svelte';
 
 	let activeTab = $state<'home' | 'video' | 'audio' | 'image' | 'radio' | 'all' | 'admin'>('home');
-	let radioSubTab = $state<'stations' | 'studio'>('stations');
+	/**
+	 * Three things share the Radio tab, and they are genuinely different:
+	 * `web` lists internet stations from the library, `local` lists what VuIO
+	 * servers on this network are broadcasting, and `studio` is where those
+	 * broadcasts are run.
+	 */
+	let radioSubTab = $state<'web' | 'local' | 'studio'>('web');
 
 	onMount(async () => {
 		await mediaStore.initServerInfo();
@@ -87,10 +94,16 @@
 				<h2>Radio & Live Broadcasting</h2>
 				<div class="radio-subtab-group">
 					<button
-						class="radio-subtab-btn {radioSubTab === 'stations' ? 'active' : ''}"
-						onclick={() => (radioSubTab = 'stations')}
+						class="radio-subtab-btn {radioSubTab === 'web' ? 'active' : ''}"
+						onclick={() => (radioSubTab = 'web')}
 					>
 						<Radio size={16} /> Web Radio Stations
+					</button>
+					<button
+						class="radio-subtab-btn {radioSubTab === 'local' ? 'active' : ''}"
+						onclick={() => (radioSubTab = 'local')}
+					>
+						<Server size={16} /> Local Radio Stations
 					</button>
 					<button
 						class="radio-subtab-btn {radioSubTab === 'studio' ? 'active' : ''}"
@@ -103,6 +116,8 @@
 
 			{#if radioSubTab === 'studio'}
 				<RadioStudio />
+			{:else if radioSubTab === 'local'}
+				<LocalStations />
 			{:else}
 				<MediaGrid />
 			{/if}

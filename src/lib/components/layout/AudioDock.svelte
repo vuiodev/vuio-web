@@ -16,13 +16,27 @@
 
 	$effect(() => {
 		if (playerStore.activeAudioItem && audioEl) {
-			const streamUrl = getMediaStreamUrl(playerStore.activeAudioItem.id);
-			if (audioEl.src !== window.location.origin + streamUrl) {
+			// A live station carries its own absolute URL: it has no library
+			// record to stream from, and when it belongs to another VuIO server
+			// on the network it is not on this origin at all.
+			const streamUrl =
+				playerStore.activeAudioItem.stream_url ??
+				getMediaStreamUrl(playerStore.activeAudioItem.id);
+			const absolute = streamUrl.startsWith('http')
+				? streamUrl
+				: window.location.origin + streamUrl;
+			if (audioEl.src !== absolute) {
 				audioEl.src = streamUrl;
 				if (playerStore.isPlayingAudio) {
 					audioEl.play().catch(() => {});
 				}
 			}
+		} else if (!playerStore.activeAudioItem && audioEl && audioEl.src) {
+			// Stopping has to detach the source, or the browser keeps the
+			// connection open and the station keeps counting a listener.
+			audioEl.pause();
+			audioEl.removeAttribute('src');
+			audioEl.load();
 		}
 	});
 
