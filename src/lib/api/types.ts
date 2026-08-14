@@ -16,6 +16,70 @@ export interface MediaItem {
 	info_title: string | null;
 	info_overview: string | null;
 	info_art: boolean;
+	/**
+	 * Play this URL instead of `/media/{id}`.
+	 *
+	 * A live station has no library record to stream from — and when it belongs
+	 * to another VuIO server, no record here at all — so it carries the absolute
+	 * URL of its own stream.
+	 */
+	stream_url?: string;
+}
+
+/** How a station orders its queue. */
+export type BroadcastMode = 'linear' | 'shuffle' | 'loop';
+
+/**
+ * A station this server broadcasts, as the studio sees it.
+ *
+ * `enabled` is what the operator asked for and survives a restart; `is_live` is
+ * whether it is actually on the air right now. They differ only while a station
+ * is failing to start.
+ */
+export interface RadioStation {
+	id: number;
+	name: string;
+	genre: string;
+	folders: string[];
+	mode: BroadcastMode;
+	enabled: boolean;
+	is_live: boolean;
+	codec?: string;
+	listeners: number;
+	uptime_secs: number;
+	queue_len: number;
+	/** Files in those folders that cannot be broadcast without re-encoding. */
+	skipped_files: number;
+	now_playing?: {
+		title: string;
+		artist: string | null;
+		path: string | null;
+		started_at_epoch_secs: number;
+	};
+	stream_url?: string;
+}
+
+/** A live station as any server publishes it. */
+export interface PublishedStation {
+	id: number;
+	name: string;
+	genre: string;
+	codec: string;
+	stream_url: string;
+	listeners: number;
+	uptime_secs: number;
+	now_playing?: string;
+	artist?: string;
+	title?: string;
+}
+
+/** One VuIO server on the network, and what it is broadcasting. */
+export interface RadioPeer {
+	uuid: string;
+	name: string;
+	address: string;
+	is_self: boolean;
+	stations: PublishedStation[];
 }
 
 export interface MediaPageResponse {
