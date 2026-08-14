@@ -3,6 +3,7 @@
 	import { radioStationsStore } from '$lib/stores/radioStationsStore.svelte';
 	import { mediaStore } from '$lib/stores/mediaStore.svelte';
 	import { fetchBrowse } from '$lib/api/client';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import type { BroadcastMode, RadioStation } from '$lib/api/types';
 	import {
 		Radio,
@@ -152,12 +153,14 @@
 	}
 
 	async function copyUrl(url: string) {
-		try {
-			await navigator.clipboard.writeText(url);
+		const success = await copyToClipboard(url);
+		if (success) {
 			copiedUrl = url;
-			setTimeout(() => (copiedUrl = null), 2500);
-		} catch {
-			/* clipboard access can be refused; the URL is on screen either way */
+			setTimeout(() => {
+				if (copiedUrl === url) {
+					copiedUrl = null;
+				}
+			}, 2500);
 		}
 	}
 
@@ -350,27 +353,31 @@
 							</span>
 						{/if}
 					</div>
-
-					{#if station.stream_url}
-						<div class="stream-url">
-							<div class="url-text">
-								<span class="url-label">Stream URL</span>
-								<code>{station.stream_url}</code>
-							</div>
-							<button class="btn btn-secondary btn-sm" onclick={() => copyUrl(station.stream_url!)}>
-								{#if copiedUrl === station.stream_url}
-									<Check size={14} /> Copied
-								{:else}
-									<Copy size={14} /> Copy
-								{/if}
-							</button>
-						</div>
-					{/if}
 				{:else}
 					<p class="folders-summary">
 						{station.folders.length}
 						{station.folders.length === 1 ? 'folder' : 'folders'}: {station.folders.join(', ')}
 					</p>
+				{/if}
+
+				{#if station.stream_url}
+					<div class="stream-url {station.is_live ? '' : 'offline'}">
+						<div class="url-text">
+							<span class="url-label">{station.is_live ? 'Stream URL' : 'Station Stream URL'}</span>
+							<code title={station.stream_url}>{station.stream_url}</code>
+						</div>
+						<button
+							class="btn btn-secondary btn-sm copy-btn"
+							onclick={() => copyUrl(station.stream_url!)}
+							title="Copy stream URL to clipboard"
+						>
+							{#if copiedUrl === station.stream_url}
+								<Check size={14} /> Copied
+							{:else}
+								<Copy size={14} /> Copy
+							{/if}
+						</button>
+					</div>
 				{/if}
 
 				<div class="station-actions">
@@ -768,11 +775,21 @@
 		border: 1px solid rgba(0, 164, 220, 0.3);
 	}
 
+	.stream-url.offline {
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px solid var(--border-glass);
+	}
+
+	.stream-url.offline .url-label {
+		color: var(--text-muted);
+	}
+
 	.url-text {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: 4px;
 		min-width: 0;
+		flex: 1;
 	}
 
 	.url-label {
@@ -784,11 +801,19 @@
 	}
 
 	.url-text code {
-		font-size: 0.76rem;
-		color: var(--text-secondary);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		font-size: 0.78rem;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		color: var(--text-main);
+		word-break: break-all;
+		overflow-wrap: anywhere;
+		white-space: normal;
+		line-height: 1.4;
+		user-select: all;
+	}
+
+	.copy-btn {
+		flex-shrink: 0;
+		align-self: center;
 	}
 
 	.folders-summary {

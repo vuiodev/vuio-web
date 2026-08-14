@@ -14,6 +14,8 @@
 		AlertTriangle
 	} from '@lucide/svelte';
 
+	import { copyToClipboard } from '$lib/utils/clipboard';
+
 	let copiedUrl = $state<string | null>(null);
 
 	let totalStations = $derived(
@@ -28,12 +30,14 @@
 	onDestroy(() => radioStationsStore.stopPolling());
 
 	async function copyUrl(url: string) {
-		try {
-			await navigator.clipboard.writeText(url);
+		const success = await copyToClipboard(url);
+		if (success) {
 			copiedUrl = url;
-			setTimeout(() => (copiedUrl = null), 2500);
-		} catch {
-			/* the URL is on screen either way */
+			setTimeout(() => {
+				if (copiedUrl === url) {
+					copiedUrl = null;
+				}
+			}, 2500);
 		}
 	}
 
